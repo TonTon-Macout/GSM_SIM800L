@@ -1,70 +1,85 @@
-# GSM_SIM800L
+# GSM — асинхронная библиотека для SIM800L
 
-Неблокирующая библиотека для модулей **SIM800L** (и совместимых) под Arduino / ESP32 / ESP8266.
+Неблокирующая библиотека для работы с GSM-модемами **SIM800L** и совместимыми модулями на Arduino-платформах.
 
+Основной интерфейс — класс `gsm::GSM`. Работа с модемом выполняется асинхронно: библиотека принимает запросы, обрабатывает UART и вызывает пользовательские колбэки по мере получения ответов.
 
+```cpp
+#include <Arduino.h>
+#include <GSM.h>
 
-### Возможности
-- Полностью асинхронная работа: нет `delay()`, нет `String`, нет динамической памяти
-- Очередь AT-команд с приоритетами и эксклюзивными транзакциями
-- Автоматический приём SMS (UCS2 → UTF-8), отправка SMS, USSD
-- Голосовые звонки: входящие (CLIP), ответ, сброс, исходящие
-- Whitelist номеров (Auth) с нормализацией `8…` / `7…` → `+7…`
-- Мониторинг сети: сигнал, регистрация, оператор, состояние SIM
-- Recovery-механизм при зависании модема
-- Подробные ошибки CME/CMS + русские тексты
+gsm::GSM modem(Serial1);
+```
 
-### Совместимость
-- Arduino C++11 и выше
-- ESP32, ESP8266, Arduino Mega / ATmega2560 и любые платы с `Stream`
-- Скетч сам инициализирует UART и выбирает пины
+## Возможности
 
-### Зависимости
-Нет внешних зависимостей.
+- Асинхронная работа без `delay()`, `String`, динамического выделения памяти и блокирующих циклов ожидания.
+- Очередь AT-команд с приоритетами и эксклюзивными транзакциями.
+- Приём SMS: уведомления `+CMTI`, чтение из памяти модема, декодирование UCS2 HEX в UTF-8.
+- Отправка SMS на русском и английском языках.
+- **Длинные SMS с автоматическим разбиением на части (Multipart SMS)** через PDU и UDH.
+- Очередь исходящих SMS: до 5 сообщений, отправляемых последовательно.
+- USSD-запросы и декодирование UCS2-ответов в UTF-8.
+- Входящие и исходящие голосовые вызовы.
+- Whitelist телефонных номеров с нормализацией российских номеров `8…` / `7…` в `+7…`.
+- Мониторинг SIM-карты, регистрации в сети, уровня сигнала и оператора.
+- Кэш диагностических данных без повторной отправки AT-команд.
+- Контроль доступности модема и recovery-уведомления для аппаратного перезапуска.
+- Подробные ошибки CME/CMS и готовые русские описания.
+- Комментарии Doxygen к публичным методам для подсказок IntelliSense в VS Code.
+
+## Совместимость
+
+- Arduino C++11 и выше.
+- ESP32, Arduino Mega / ATmega2560 и другие платы, предоставляющие объект `Stream`.
+- UART и выбор пинов инициализируются в скетче.
+- Для ESP32 можно использовать `HardwareSerial` с указанием RX/TX в `begin()`.
+
+Библиотека не управляет питанием модема и физическими выводами `RESET` / `PWRKEY`: это остаётся задачей приложения.
+
+## Зависимости
+
+Внешние библиотеки не требуются.
 
 ## Содержание
-- [Подключение](#wiring)
-- [Быстрый старт](#quickstart)
-- [Документация](#usage)
-  - [gsm::GSM](#gsm)
-  - [Колбэки (ModemCallbacks)](#callbacks)
-  - [SMS](#sms)
-  - [Звонки](#calls)
-  - [USSD](#ussd)
-  - [Сеть и диагностика](#network)
-  - [Auth — whitelist](#auth)
-  - [Recovery](#recovery)
-  - [Низкоуровневые команды](#raw)
-  - [Типы и коды ошибок](#types)
-- [Важные семантические моменты](#semantics)
-- [Ограничения](#limits)
-- [Версии](#versions)
-- [Установка](#install)
-- [Баги и обратная связь](#feedback)
 
-<a id="wiring"></a>
+- [Подключение](#подключение)
+- [Быстрый старт](#быстрый-старт)
+- [Основной класс gsm::GSM](#основной-класс-gsmgsm)
+- [Колбэки](#колбэки)
+- [SMS](#sms)
+- [Звонки](#звонки)
+- [USSD](#ussd)
+- [Сеть и диагностика](#сеть-и-диагностика)
+- [Auth — список разрешённых номеров](#auth--список-разрешённых-номеров)
+- [Recovery](#recovery)
+- [Низкоуровневые команды](#низкоуровневые-команды)
+- [Типы и ошибки](#типы-и-ошибки)
+- [Важные особенности работы](#важные-особенности-работы)
+- [Установка](#установка)
+- [Обратная связь](#обратная-связь)
+
+---
 
 ## Подключение
 
-Типовая схема SIM800L:
+Типовая схема подключения SIM800L:
 
-```
-SIM800L          МК
---------         --------
-VCC      →       4.0…4.2 В (отдельный источник, не от 3.3 В МК!)
-GND      →       GND
-TXD      →       RX МК
-RXD      →       TX МК (через делитель 5→3.3 В, если МК 3.3 В)
-RST      →       любой GPIO (опционально, для recovery)
-PWRKEY   →       любой GPIO (опционально)
-```
+| SIM800L | Микроконтроллер / питание |
+|---|---|
+| VCC | Стабильный источник примерно 4,0–4,2 В |
+| GND | Общая земля |
+| TXD | RX микроконтроллера |
+| RXD | TX микроконтроллера; при необходимости согласовать уровни |
+| RST | GPIO (необязательно, для аппаратного recovery) |
+| PWRKEY | GPIO (необязательно, для управления питанием) |
 
 > [!IMPORTANT]
-> SIM800L очень чувствителен к питанию. При передаче ток может кратковременно достигать 2 А. Обязателен конденсатор 1000–2200 мкФ рядом с модулем и стабильный источник 4 В.
+> SIM800L чувствителен к питанию. Во время передачи возможны кратковременные токовые пики до 2 А. Используйте отдельный стабильный источник питания, рассчитанный на такие импульсы, и установите рядом с модулем низкоимпедансный конденсатор подходящей ёмкости (обычно 1000–2200 мкФ).
 
-Скетч **сам** владеет пинами RESET/PWRKEY и питанием. Библиотека только сообщает, когда нужна аппаратная перезагрузка (`onRecoveryRequired`).
+Библиотека не переключает GPIO и не выполняет аппаратный reset. При необходимости она вызывает `onRecoveryRequired(attempt)`, после чего приложение само выполняет нужную последовательность RESET/PWRKEY/power-cycle.
 
-<a id="quickstart"></a>
+---
 
 ## Быстрый старт
 
@@ -78,8 +93,9 @@ void onReady() {
     Serial.println(F("Modem ready"));
 }
 
-void onInitCompleteEx(const gsm::InitResult& r) {
-    Serial.println(r.message ? r.message : "?");
+void onInitCompleteEx(const gsm::InitResult& result) {
+    Serial.print(F("Init: "));
+    Serial.println(result.message ? result.message : "?");
 }
 
 bool onSmsMessage(const gsm::SMSMessage& sms) {
@@ -87,513 +103,689 @@ bool onSmsMessage(const gsm::SMSMessage& sms) {
     Serial.print(sms.sender);
     Serial.print(F(": "));
     Serial.println(sms.text);
-    // здесь разбор команд: "RELAY ON", "STATUS" и т.д.
-    return true;   // true → сообщение обработано (и удалится, если включён auto-delete)
+
+    // Здесь можно разобрать команду и выполнить действие.
+    // true означает, что сообщение обработано.
+    return true;
+}
+
+void onSmsSent(const char* number, const char* text, gsm::Result result) {
+    Serial.print(F("SMS to "));
+    Serial.print(number);
+    Serial.print(F(": "));
+    Serial.println(gsm::resultToStr(result));
 }
 
 void setup() {
     Serial.begin(115200);
 
 #if defined(ESP32)
-    Serial1.begin(9600, SERIAL_8N1, 16, 17);  // RX, TX
+    Serial1.begin(9600, SERIAL_8N1, 16, 17); // RX, TX
 #else
     Serial1.begin(9600);
 #endif
 
     gsm::ModemCallbacks cb = {};
-    cb.onReady          = onReady;
+    cb.onReady = onReady;
     cb.onInitCompleteEx = onInitCompleteEx;
-    cb.onSmsMessage     = onSmsMessage;
+    cb.onSmsMessage = onSmsMessage;
+    cb.onSmsSent = onSmsSent;
     modem.setCallbacks(cb);
 
     modem.begin();
-    modem.init();                 // асинхронная инициализация
+    modem.init(); // Асинхронная инициализация.
 }
 
 void loop() {
-    modem.process();              // обязательно вызывать постоянно
+    modem.process(); // Вызывать постоянно.
 }
 ```
 
-<a id="usage"></a>
+`modem.process()` обязательно должен регулярно вызываться из `loop()`. Не помещайте его в длинные блокирующие участки кода.
 
-## Документация
+---
 
-<a id="gsm"></a>
+## Основной класс `gsm::GSM`
 
-### gsm::GSM — основной класс
+Создание объекта:
 
 ```cpp
-gsm::GSM modem(Serial1);          // любой Stream (HardwareSerial / SoftwareSerial)
+gsm::GSM modem(Serial1);
+```
 
-void begin();                     // запуск ядра
-void stop();                      // остановка
-void process();                   // обрабатывать UART + очередь (вызывать в loop)
+### Запуск и обработка
 
+```cpp
+void begin();       // Запустить Core.
+void stop();        // Остановить Core.
+void process();     // Обработать UART, очередь команд и драйвер; вызывать постоянно.
 Result init(const RequestInfo& request = RequestInfo());
-                                  // мягкая асинхронная инициализация модема
-
+                    // Запустить асинхронную инициализацию модема.
 void setCallbacks(const ModemCallbacks& cb);
+                    // Установить набор пользовательских колбэков.
+```
 
-// ---- статус ----
-bool isAvailable() const;         // модем хоть раз ответил на AT
+### Состояние модема
+
+```cpp
+bool isAvailable() const;       // Модем хотя бы один раз ответил на AT.
 bool isResponsive(uint32_t maxAgeMs = 30000) const;
-bool isNetworkConnected() const;  // CREG = 1 или 5
-bool isInitDone() const;          // полная успешная инициализация (SIM + SMS)
+bool isNetworkConnected() const;
+bool isInitDone() const;        // Успешно завершены базовая настройка, SIM и SMS.
 bool isSimReady() const;
 bool isSmsReady() const;
-bool isBusy() const;              // сейчас выполняется AT-команда
+bool isBusy() const;
 CoreState state() const;
 uint8_t queuedCount() const;
 
 const ModemError& lastError() const;
 const char* lastErrorText() const;
 const InitResult& lastInitResult() const;
+```
 
-// ---- сеть (кэш, без отправки AT) ----
-int8_t signalQuality() const;     // 0…31, -1 = неизвестно
-int8_t signalDbm() const;         // -113…-51, -1 = неизвестно
+### SMS
+
+```cpp
+Result sendSMS(const char* number, const char* text,
+               const RequestInfo& request = RequestInfo());
+
+uint8_t smsSendQueueCount() const;
+bool isSmsSendActive() const;
+void clearSmsSendQueue();
+
+void setSmsAutoDelete(bool enabled);
+bool isSmsAutoDelete() const;
+void setSmsScanInterval(uint32_t intervalMs); // 0 — отключить периодическое сканирование.
+uint32_t smsScanInterval() const;
+
+Result deleteSMS(const char* storage, uint8_t index);
+Result deleteAllSMS(const char* storage);
+Result checkSmsMemory(const char* storage);
+```
+
+### USSD и звонки
+
+```cpp
+Result sendUSSD(const char* code, uint8_t dcs = 15,
+                const RequestInfo& request = RequestInfo());
+
+Result answerCall(const RequestInfo& request = RequestInfo());
+Result hangUp(const RequestInfo& request = RequestInfo());
+Result dial(const char* number, const RequestInfo& request = RequestInfo());
+CallState callState() const;
+```
+
+### Мониторинг сети
+
+```cpp
+void startMonitoring();
+void stopMonitoring();
+bool isMonitoring() const;
+
+void setPollIntervals(uint32_t simMs,
+                      uint32_t registrationMs,
+                      uint32_t signalMs,
+                      uint32_t operatorMs);
+
+Result checkSim(const RequestInfo& request = RequestInfo());
+Result checkRegistration(const RequestInfo& request = RequestInfo());
+Result checkSignal(const RequestInfo& request = RequestInfo());
+Result checkOperator(const RequestInfo& request = RequestInfo());
+```
+
+### Кэш диагностических данных
+
+Эти методы возвращают последние полученные значения и сами не отправляют AT-команды:
+
+```cpp
+int8_t signalQuality() const;              // 0..31, -1 — неизвестно.
+int8_t signalDbm() const;                  // ориентировочно -113..-51 dBm.
 uint8_t registrationStatus() const;
 const char* registrationStatusText() const;
-bool isRegistered() const;
+bool isRegistered() const;                 // CREG = 1 или 5.
 bool hasSignalData() const;
 bool hasRegistrationData() const;
 const char* operatorName() const;
 bool hasOperatorData() const;
 const char* simStatus() const;
 const char* lastResponse() const;
+
 uint32_t lastResponseTime() const;
 uint32_t lastSignalUpdate() const;
 uint32_t lastRegistrationUpdate() const;
 uint32_t lastOperatorUpdate() const;
 uint32_t lastSimUpdate() const;
+```
 
-// ---- периодический мониторинг ----
-void startMonitoring();
-void stopMonitoring();
-bool isMonitoring() const;
-void setPollIntervals(uint32_t simMs, uint32_t registrationMs,
-                      uint32_t signalMs, uint32_t operatorMs);
+### Recovery
 
-// ---- одноразовые запросы ----
-Result checkSim(const RequestInfo& = RequestInfo());
-Result checkRegistration(const RequestInfo& = RequestInfo());
-Result checkSignal(const RequestInfo& = RequestInfo());
-Result checkOperator(const RequestInfo& = RequestInfo());
-
-// ---- SMS ----
-Result sendSMS(const char* number, const char* text,
-               const RequestInfo& = RequestInfo());
-void setSmsAutoDelete(bool enabled);
-bool isSmsAutoDelete() const;
-void setSmsScanInterval(uint32_t intervalMs);   // 0 = выкл
-uint32_t smsScanInterval() const;
-Result deleteSMS(const char* storage, uint8_t index);   // "SM" / "ME"
-Result deleteAllSMS(const char* storage);
-Result checkSmsMemory(const char* storage);
-
-// ---- USSD ----
-Result sendUSSD(const char* code, uint8_t dcs = 15,
-                const RequestInfo& = RequestInfo());
-
-// ---- звонки ----
-Result answerCall(const RequestInfo& = RequestInfo());
-Result hangUp(const RequestInfo& = RequestInfo());
-Result dial(const char* number, const RequestInfo& = RequestInfo());
-CallState callState() const;
-
-// ---- recovery ----
+```cpp
 void setRecoveryEnabled(bool enabled);
 bool isRecoveryEnabled() const;
 void setRecoveryTimeout(uint32_t intervalMs);
 uint32_t recoveryTimeout() const;
 void setMaxRecoveryAttempts(uint8_t attempts);
 uint8_t recoveryAttempts() const;
+void resetRecoveryAttempts();
+```
 
-// ---- низкий уровень ----
+### Низкоуровневый доступ
+
+```cpp
 Result enqueue(const char* cmd,
-               const RequestInfo& = RequestInfo(),
+               const RequestInfo& request = RequestInfo(),
                uint16_t timeoutMs = 3000,
                CommandPriority priority = CommandPriority::P_NORMAL);
+
 bool writeRaw(const char* data);
 bool writeRaw(const uint8_t* data, size_t length);
 
-// доступ к слоям
-Core&    core();
+Core& core();
 SIM800L& driver();
 Network& network();
 ```
 
+`core()`, `driver()` и `network()` предоставляют доступ к нижележащим компонентам библиотеки. Для обычной работы предпочтительно использовать методы `gsm::GSM`.
+
 > [!NOTE]
-> `Result::OK` у `init()`, `sendSMS()`, `enqueue()` и т.д. означает только то, что команда **принята в локальную очередь**. Реальный результат приходит позже через колбэки.
+> `Result::OK` у `init()`, `sendSMS()`, `enqueue()` и других асинхронных методов означает, что запрос принят библиотекой (запущен или поставлен в очередь). Это не всегда означает, что модем уже выполнил операцию. Итоговый результат сообщается через соответствующий колбэк.
 
-<a id="callbacks"></a>
+---
 
-### Колбэки (ModemCallbacks)
+## Колбэки
+
+Все поля `ModemCallbacks` можно оставить `nullptr`, если соответствующее событие не требуется.
 
 ```cpp
 struct ModemCallbacks {
     void (*onReady)();
-    void (*onInitComplete)(Result result);                 // legacy
-    void (*onInitCompleteEx)(const InitResult& result);    // предпочтительно
-    void (*onError)(Result result, const char* context);   // legacy
-    void (*onModemError)(const ModemError& error);         // предпочтительно
 
-    void (*onSimStatus)(const char* status);               // "READY", "SIM PIN"...
-    void (*onRegistration)(uint8_t n, uint8_t stat);       // +CREG
-    void (*onSignal)(uint8_t rssi, uint8_t ber);           // +CSQ
-    void (*onOperator)(const char* name);                  // +COPS
+    void (*onInitComplete)(gsm::Result result); // Совместимый старый вариант.
+    void (*onInitCompleteEx)(const gsm::InitResult& result);
+    void (*onError)(gsm::Result result, const char* context);
+    void (*onModemError)(const gsm::ModemError& error);
 
-    void (*onIncomingCall)(const char* number);            // +CLIP / RING
+    void (*onSimStatus)(const char* status);
+    void (*onRegistration)(uint8_t n, uint8_t stat);
+    void (*onSignal)(uint8_t rssi, uint8_t ber);
+    void (*onOperator)(const char* name);
+
+    void (*onIncomingCall)(const char* number);
     void (*onCallAnswered)();
     void (*onDialStarted)(const char* number);
-    void (*onCallEnded)();                                 // legacy
-    void (*onCallState)(CallState state, const char* number);
+    void (*onCallEnded)();
+    void (*onCallState)(gsm::CallState state, const char* number);
 
     void (*onRecoveryRequired)(uint8_t attempt);
 
-    void (*onSmsSent)(const char* number, Result result);
-    void (*onSmsReceived)(int index);                      // legacy +CMTI
-    bool (*onSmsMessage)(const SMSMessage& sms);           // true = обработано
-    void (*onSmsMemory)(const SMSMemory& memory);
-    void (*onSmsMemoryWarning)(const SMSMemory& memory);   // ≥ 80 %
-    void (*onSmsMemoryFull)(const SMSMemory& memory);
-    void (*onSmsError)(const char* storage, uint8_t index, Result result);
+    void (*onSmsSent)(const char* number, const char* text, gsm::Result result);
+    void (*onSmsReceived)(int index); // Старый callback по событию +CMTI.
+    bool (*onSmsMessage)(const gsm::SMSMessage& sms);
+    void (*onSmsMemory)(const gsm::SMSMemory& memory);
+    void (*onSmsMemoryWarning)(const gsm::SMSMemory& memory);
+    void (*onSmsMemoryFull)(const gsm::SMSMemory& memory);
+    void (*onSmsError)(const char* storage, uint8_t index, gsm::Result result);
 
-    void (*onUssdResponse)(uint8_t m, const char* str);    // +CUSD
+    void (*onUssdResponse)(uint8_t status, const char* text,
+                           const gsm::RequestInfo& request);
 
-    void (*onRawLine)(const char* line);                   // отладка
+    void (*onRawLine)(const char* line);
 };
 ```
 
-Все указатели можно оставлять `nullptr`. Неиспользуемые колбэки просто не вызываются.
+Предпочтительно использовать `onInitCompleteEx` и `onModemError`: они предоставляют больше диагностической информации, чем legacy-варианты.
 
-<a id="sms"></a>
+---
 
-### SMS
+## SMS
 
-#### Приём
+### Приём SMS
 
-Библиотека сама ловит `+CMTI`, ставит сообщение в очередь, читает через `AT+CMGR`, декодирует UCS2 HEX → UTF-8 и вызывает `onSmsMessage`.
+Библиотека обрабатывает уведомления `+CMTI`, добавляет сообщение в очередь чтения, получает его через `AT+CMGR` и декодирует UCS2 HEX в UTF-8.
 
 ```cpp
 bool onSmsMessage(const gsm::SMSMessage& sms) {
-    // sms.storage   — "SM" или "ME"
-    // sms.index
-    // sms.status    — "REC UNREAD" / "REC READ" ...
+    // sms.storage   — память ("SM" или "ME")
+    // sms.index     — индекс сообщения
+    // sms.status    — статус сообщения
     // sms.sender    — номер отправителя
-    // sms.timestamp — время от оператора
-    // sms.text      — UTF-8 текст
+    // sms.timestamp — дата/время от оператора
+    // sms.text      — текст в UTF-8
 
-    if (!auth.isAllowed(sms)) {
-        return true;          // отклонить и (при auto-delete) удалить
-    }
+    Serial.println(sms.sender);
+    Serial.println(sms.text);
 
-    // разбор команды
-    if (strcmp(sms.text, "STATUS") == 0) {
-        modem.sendSMS(sms.sender, "OK, all systems normal");
-    }
-
-    return true;              // true → успешно обработано
+    // true — сообщение успешно обработано.
+    // При включённом auto-delete библиотека сможет удалить его.
+    return true;
 }
 ```
 
+Настройка хранения:
+
 ```cpp
-modem.setSmsAutoDelete(true);     // удалять только если onSmsMessage вернул true
-modem.setSmsScanInterval(30000);  // периодическое сканирование SM+ME (0 = выкл)
+modem.setSmsAutoDelete(false); // По умолчанию сообщения сохраняются.
+modem.setSmsAutoDelete(true);  // Удалять после успешной обработки.
+modem.setSmsScanInterval(30000); // Периодически проверять SM и ME; 0 — выкл.
+
 modem.deleteSMS("SM", 3);
 modem.deleteAllSMS("ME");
-modem.checkSmsMemory("SM");       // результат придёт в onSmsMemory
+modem.checkSmsMemory("SM");
 ```
 
-По умолчанию сообщения **не удаляются**. После успешного `onSmsMessage(true)` + включённом auto-delete — удаляются.
+По умолчанию автоматическое удаление отключено. Возврат `true` из `onSmsMessage()` означает, что приложение обработало SMS; фактическое удаление выполняется только при включённом `setSmsAutoDelete(true)`.
 
-#### Отправка
+### Отправка коротких и длинных SMS
+
+Отправка принимает обычную UTF-8 строку:
 
 ```cpp
-modem.sendSMS("+79091234567", "Привет! Команда выполнена");
+modem.sendSMS("+79091234567", "Привет! Команда выполнена.");
+
+modem.sendSMS("+79091234567",
+              "Это длинное сообщение. Библиотека автоматически "
+              "разделит его на несколько частей и отправит последовательно.");
 ```
 
-- Текст принимается в UTF-8, отправляется как UCS2
-- Лимит — **70 UTF-16 code units** (суррогатные пары считаются за 2)
-- Multipart SMS **не поддерживается**
-- Результат приходит в `onSmsSent`
+Особенности реализации:
 
-<a id="calls"></a>
+- Для исходящих SMS используется **PDU-режим**.
+- Текст UTF-8 преобразуется в UCS2.
+- Для длинных сообщений формируются сегменты с UDH (concatenated SMS).
+- Телефон получателя обычно объединяет части в одно сообщение.
+- Разбиение выполняется автоматически; вручную делить текст не нужно.
+- Поддерживаются до **5 сегментов** в одном сообщении.
+- Максимальный входной размер текста — **280 байт UTF-8**.
+- При разбиении учитываются границы UTF-16 и суррогатные пары.
+- После отправки драйвер возвращает модем в текстовый режим SMS (`AT+CMGF=1`).
 
-### Звонки
+Для UCS2 один обычный SMS-сегмент вмещает до 70 UTF-16 code units; в составном сообщении часть места занимает UDH, поэтому полезная нагрузка сегмента меньше. Количество сегментов зависит от кодировки и длины текста.
+
+### Очередь исходящих SMS
+
+Можно отправлять несколько сообщений подряд, не ожидая завершения предыдущего:
+
+```cpp
+modem.sendSMS("+79091234567", "Первое сообщение");
+modem.sendSMS("+79091234567", "Второе сообщение");
+modem.sendSMS("+79091234567", "Третье сообщение");
+
+uint8_t waiting = modem.smsSendQueueCount();
+bool sending = modem.isSmsSendActive();
+
+// Очистить ещё не начатые сообщения очереди:
+modem.clearSmsSendQueue();
+```
+
+- Очередь рассчитана на **5 исходящих сообщений**.
+- Сообщения отправляются последовательно.
+- Каждое длинное сообщение может состоять из нескольких сегментов.
+- `onSmsSent(number, text, result)` вызывается **один раз на исходное сообщение**, а не на каждый сегмент.
+- Callback вызывается после успешной отправки всех сегментов либо после первой ошибки.
+- `clearSmsSendQueue()` очищает ожидающие сообщения; уже выполняемая отправка не является элементом ожидающей очереди.
+
+Пример callback:
+
+```cpp
+void onSmsSent(const char* number, const char* text, gsm::Result result) {
+    if (result == gsm::Result::OK) {
+        Serial.println(F("SMS sent"));
+    } else {
+        Serial.print(F("SMS error: "));
+        Serial.println(gsm::errorToString(result));
+    }
+}
+```
+
+`sendSMS()` возвращает `Result::OK`, если сообщение запущено или принято в очередь. Если очередь заполнена, возвращается `Result::QUEUE_FULL`. Некорректные или слишком большие входные данные приводят к `Result::INVALID_PARAM`.
+
+---
+
+## Звонки
 
 ```cpp
 void onIncomingCall(const char* number) {
-    if (!auth.isAllowedCall(number)) {
-        modem.hangUp();
-        return;
-    }
-    // modem.answerCall();   // ответить
+    Serial.print(F("Incoming call: "));
+    Serial.println(number);
+
+    // Например, проверить номер через auth.isAllowedCall(number).
+    // modem.answerCall();
 }
 
 void onCallState(gsm::CallState state, const char* number) {
-    // IDLE, RINGING, ANSWERING, ACTIVE, DIALING, ENDED, BUSY, FAILED
+    // IDLE, RINGING, ANSWERING, ACTIVE,
+    // DIALING, ENDED, BUSY, FAILED.
 }
 
 modem.dial("+79091234567");
 modem.answerCall();
 modem.hangUp();
-CallState st = modem.callState();
+
+gsm::CallState state = modem.callState();
 ```
 
-<a id="ussd"></a>
+События входящего вызова определяются по `RING` / `+CLIP`. Состояние соединения и завершения можно отслеживать через `onCallState`; `onCallEnded` оставлен для совместимости.
 
-### USSD
+---
+
+## USSD
 
 ```cpp
-void onUssdResponse(uint8_t status, const char* text) {
-    // status — поле m из +CUSD
-    // text   — UTF-8 (UCS2 автоматически декодируется)
-    Serial.println(text);
+void onUssdResponse(uint8_t status, const char* text,
+                    const gsm::RequestInfo& request) {
+    Serial.print(F("USSD: "));
+    Serial.println(text); // UTF-8
 }
 
-modem.sendUSSD("*100#");        // DCS 15 (GSM 7-bit) по умолчанию
-modem.sendUSSD("*100#", 72);    // если оператор требует UCS2
+modem.sendUSSD("*100#");       // DCS 15 по умолчанию.
+modem.sendUSSD("*100#", 72);   // DCS 72, если оператор требует UCS2.
 ```
 
-Интерактивные USSD-сессии не поддерживаются — только один запрос → один ответ.
+UCS2-ответы автоматически декодируются в UTF-8. Поддерживается одноразовый запрос с ответом; интерактивные USSD-сессии не реализованы.
 
-<a id="network"></a>
+---
 
-### Сеть и диагностика
+## Сеть и диагностика
 
-Мониторинг запускается автоматически после успешного ответа модема на AT. Можно управлять вручную:
+Мониторинг может запускаться автоматически после успешного обмена с модемом во время инициализации. Им также можно управлять вручную:
 
 ```cpp
 modem.startMonitoring();
-modem.setPollIntervals(60000, 15000, 10000, 300000);
-//                     SIM    CREG   CSQ    COPS
-// 0 = отключить конкретный опрос
 
-// Чтение кэша (без отправки AT):
-int8_t  csq  = modem.signalQuality();      // 0…31
-int8_t  dbm  = modem.signalDbm();
-uint8_t reg  = modem.registrationStatus(); // 0…5
-bool    ok   = modem.isRegistered();
-const char* op = modem.operatorName();
+modem.setPollIntervals(
+    60000,   // SIM — 60 секунд
+    15000,   // регистрация — 15 секунд
+    10000,   // уровень сигнала — 10 секунд
+    300000   // оператор — 5 минут
+);
+
+// 0 отключает соответствующий периодический опрос.
+```
+
+Получение кэшированных значений:
+
+```cpp
+int8_t csq = modem.signalQuality();          // 0..31, -1 — неизвестно.
+int8_t dbm = modem.signalDbm();              // оценка уровня в dBm.
+uint8_t reg = modem.registrationStatus();    // код +CREG.
+bool registered = modem.isRegistered();      // true при статусе 1 или 5.
+
+const char* operatorName = modem.operatorName();
 const char* sim = modem.simStatus();
 ```
 
-| CREG | Значение              |
-|------|-----------------------|
-| 0    | Не зарегистрирован    |
-| 1    | Домашняя сеть         |
-| 2    | Поиск сети            |
-| 3    | Регистрация запрещена |
-| 4    | Неизвестно            |
-| 5    | Роуминг               |
+Значения `registrationStatus()` соответствуют статусу `+CREG`:
 
-<a id="auth"></a>
+| Код | Значение |
+|---:|---|
+| 0 | Не зарегистрирован |
+| 1 | Зарегистрирован в домашней сети |
+| 2 | Выполняется поиск сети |
+| 3 | Регистрация запрещена |
+| 4 | Неизвестное состояние |
+| 5 | Зарегистрирован в роуминге |
 
-### Auth — whitelist номеров
+Геттеры не отправляют AT-команды: они возвращают последнее сохранённое значение. Для получения свежих данных используйте периодический мониторинг или методы `checkSim()`, `checkRegistration()`, `checkSignal()`, `checkOperator()`.
 
-Простой in-memory список. Сохранение в EEPROM / Preferences — ответственность приложения.
+---
+
+## Auth — список разрешённых номеров
+
+`gsm::Auth` — фиксированный список номеров в оперативной памяти. Слоты не сдвигаются при удалении номера, поэтому индекс слота можно сохранять в EEPROM / Preferences или использовать в интерфейсе приложения.
 
 ```cpp
 gsm::Auth auth;
 
-auth.add("+79091234567");
-auth.add("89098887766");          // нормализуется в +7909…
-auth.add("79161234567");
-auth.setMode(gsm::AuthMode::WHITELIST);  // или DISABLE
+auth.set(0, "+79091234567");       // Записать номер в слот 0.
+auth.set(4, "89098887766");        // Записать в слот 4; остальные слоты не сдвигаются.
+auth.add("79161234567");           // Добавить в первый свободный слот.
 
-if (auth.isAllowed(sms)) { /* … */ }
-if (auth.isAllowedCall(number)) { /* … */ } else { modem.hangUp(); }
+auth.removeAt(4);                  // Очистить слот 4.
+auth.remove("+79091234567");       // Удалить номер по значению.
 
-auth.remove("+79091234567");
-auth.contains("+79091234567");
-auth.clear();
-auth.count();
-auth.get(0);                      // указатель на нормализованный номер
+const char* number = auth.get(0);  // nullptr, если слот пуст или индекс неверен.
+int8_t slot = auth.findIndex(number);
+
+auth.setMode(gsm::AuthMode::WHITELIST);
+// gsm::AuthMode::DISABLE — проверка доступа отключена.
+
+if (auth.isAllowed(sms)) {
+    // Отправитель SMS разрешён.
+}
+
+if (auth.isAllowedCall(number)) {
+    // Номер звонящего разрешён.
+}
 ```
 
-- Максимум номеров: `AUTH_MAX_NUMBERS` (по умолчанию 16). Можно переопределить **до** `#include`:
-  ```cpp
-  #define AUTH_MAX_NUMBERS 32
-  #include <GSM.h>
-  ```
-- Нормализация: оставляются только цифры и опциональный `+`. Российские 8XXXXXXXXXX и 7XXXXXXXXXX → `+7XXXXXXXXXX`.
-
-<a id="recovery"></a>
-
-### Recovery
-
-Библиотека не управляет пинами RESET/PWRKEY. Она только периодически проверяет отзывчивость модема и сообщает приложению:
+Дополнительные методы:
 
 ```cpp
-modem.setRecoveryTimeout(60000);      // проверка раз в минуту
+bool contains(const char* number) const;
+uint8_t count() const;              // Количество занятых слотов.
+uint8_t capacity() const;           // Полная ёмкость списка.
+uint8_t freeSlots() const;
+bool isFull() const;
+bool isEmpty() const;
+bool isSlotUsed(uint8_t slot) const;
+int8_t firstFreeSlot() const;
+bool clearSlot(uint8_t slot);
+void clear();
+gsm::AuthMode mode() const;
+```
+
+**Важно:** `count()` возвращает количество занятых ячеек, а не индекс последней занятой ячейки плюс один. Перебирать список нужно от `0` до `capacity() - 1`, пропуская `nullptr`:
+
+```cpp
+for (uint8_t i = 0; i < auth.capacity(); ++i) {
+    const char* phone = auth.get(i);
+    if (!phone) continue;
+
+    Serial.println(phone);
+}
+```
+
+По умолчанию доступно 16 слотов. Ёмкость можно изменить до подключения заголовка:
+
+```cpp
+#define AUTH_MAX_NUMBERS 32
+#include <GSM.h>
+```
+
+Номера нормализуются при добавлении и сравнении. Российские номера `8XXXXXXXXXX` и `7XXXXXXXXXX` приводятся к формату `+7XXXXXXXXXX`. Список не сохраняется автоматически — сохранение и восстановление выполняет приложение.
+
+Пример использования находится в `examples/AuthExample`.
+
+---
+
+## Recovery
+
+Библиотека отслеживает доступность модема и может сообщить приложению, что требуется аппаратное восстановление. Физические линии RESET/PWRKEY и питание остаются под управлением приложения.
+
+```cpp
+modem.setRecoveryTimeout(60000); // Интервал проверки.
 modem.setMaxRecoveryAttempts(3);
 modem.setRecoveryEnabled(true);
 
 void onRecoveryRequired(uint8_t attempt) {
-    // attempt 1 → импульс RESET
-    // attempt 2 → импульс PWRKEY
-    // attempt 3 → полный power-cycle
+    switch (attempt) {
+        case 1:
+            // Выполнить аппаратный RESET.
+            break;
+        case 2:
+            // Попробовать управление PWRKEY.
+            break;
+        case 3:
+            // Выполнить полный power-cycle.
+            break;
+    }
 }
 ```
 
-После того как модем снова ответит на AT, драйвер автоматически запускает `init()` и восстанавливает настройки.
+После того как модем снова начинает отвечать на AT, драйвер автоматически запускает `init()` для восстановления конфигурации.
 
-<a id="raw"></a>
+---
 
-### Низкоуровневые команды
+## Низкоуровневые команды
+
+Для одиночных AT-команд можно использовать `enqueue()`:
 
 ```cpp
-modem.enqueue("AT+CCLK?");                    // любая AT-команда
-modem.enqueue("AT+CBC", RequestInfo(), 5000, gsm::CommandPriority::P_HIGH);
-
-modem.writeRaw("текст SMS\x1A");              // после приглашения '>'
+modem.enqueue("AT+CCLK?");
+modem.enqueue("AT+CBC",
+              gsm::RequestInfo(),
+              5000,
+              gsm::CommandPriority::P_HIGH);
 ```
 
-Для сложных последовательностей (несколько команд подряд) используйте транзакции через `core()`:
+Для передачи произвольных данных предусмотрен `writeRaw()`:
 
 ```cpp
-if (modem.core().beginTransaction(42)) {
-    modem.enqueue("AT+CMGF=1", RequestInfo(0, gsm::Source::INTERNAL, 42));
-    // …
-    modem.core().endTransaction(42);
+modem.writeRaw("текст");
+modem.writeRaw(buffer, length);
+```
+
+`writeRaw()` не заменяет механизм команд и транзакций. Используйте его только тогда, когда понимаете текущий протокол обмена и состояние модема.
+
+Для последовательностей команд, которые нельзя перемежать с другими запросами, Core предоставляет эксклюзивные транзакции:
+
+```cpp
+const uint16_t transactionId = 42;
+
+if (modem.core().beginTransaction(transactionId)) {
+    modem.enqueue(
+        "AT+COMMAND",
+        gsm::RequestInfo(0, gsm::Source::INTERNAL, transactionId)
+    );
+
+    // Добавьте остальные команды той же транзакции.
+    modem.core().endTransaction(transactionId);
 }
 ```
 
-<a id="types"></a>
+---
 
-### Типы и коды ошибок
+## Типы и ошибки
+
+### `gsm::Result`
 
 ```cpp
 enum class Result : uint8_t {
-    OK, ERROR, TIMEOUT, CANCELLED, BUSY, NOT_READY, QUEUE_FULL, INVALID_PARAM
+    OK,
+    ERROR,
+    TIMEOUT,
+    CANCELLED,
+    BUSY,
+    NOT_READY,
+    QUEUE_FULL,
+    INVALID_PARAM
 };
-
-enum class CallState : uint8_t {
-    IDLE, RINGING, ANSWERING, ACTIVE, DIALING, ENDED, BUSY, FAILED
-};
-
-enum class AuthMode : uint8_t { DISABLE, WHITELIST };
-
-enum class CommandPriority : uint8_t {
-    P_LOW = 0, P_NORMAL = 1, P_HIGH = 2, P_CRITICAL = 3
-};
-
-struct SMSMessage {
-    char storage[4];
-    uint8_t index;
-    char status[16];
-    char sender[32];
-    char timestamp[24];
-    char text[241];           // UTF-8
-};
-
-struct SMSMemory {
-    char storage[4];
-    uint8_t used;
-    uint8_t total;
-    uint8_t free() const;
-    uint8_t percent() const;
-};
-
-struct InitResult {
-    Result result;
-    bool available;
-    bool simReady;
-    bool smsReady;
-    int16_t cme;
-    const char* message;
-};
-
-struct ModemError {
-    Result result;
-    int16_t cme;              // -1 если нет
-    int16_t cms;              // -1 если нет
-    const char* context;
-    const char* message;
-};
-
-// Русские описания
-const char* errorToString(Result r);
-const char* errorToString(const ModemError& e);
-const char* resultToStr(Result r);            // короткие коды для логов
-const char* registrationStatusToString(uint8_t);
-const char* cmeToStr(int code);
-const char* cmsToStr(int code);
 ```
 
-<a id="semantics"></a>
+Для вывода ошибки используйте:
 
-## Важные семантические моменты
+```cpp
+gsm::errorToString(result); // Развёрнутое русское описание.
+gsm::resultToStr(result);   // Короткий код для логов.
+```
 
-- `process()` нужно вызывать **постоянно** в `loop()`.
-- В один момент выполняется максимум одна AT-команда. В очереди до 8 команд.
-- Пока активна транзакция — выполняются только команды с тем же `transactionId`.
-- URC (`RING`, `+CLIP`, `+CMTI`, `+CUSD`, `NO CARRIER`…) всегда доставляются в колбэки, даже во время ожидания ответа на команду.
-- Парсер обрабатывает не более 64 байт UART за один вызов `process()`.
-- Геттеры сети (`signalQuality()`, `operatorName()` и т.д.) **никогда** не отправляют AT — только читают кэш.
+### Другие основные типы
 
-<a id="limits"></a>
+- `gsm::RequestInfo` — идентификатор запроса, источник и ID транзакции.
+- `gsm::Source` — источник операции (`INTERNAL`, `PERIODIC`, `WEB`, `LCD`, `BUTTON`, `SMS`, `CALL`, `EXTERNALE`).
+- `gsm::CommandPriority` — приоритет AT-команды: `P_LOW`, `P_NORMAL`, `P_HIGH`, `P_CRITICAL`.
+- `gsm::CoreState` — состояние ядра: `STOPPED`, `IDLE`, `WAITING_RESPONSE`.
+- `gsm::CallState` — состояние голосового вызова.
+- `gsm::SMSMessage` — принятое SMS с текстом UTF-8.
+- `gsm::SMSMemory` — сведения о занятой и общей памяти SMS.
+- `gsm::InitResult` — результат полной инициализации.
+- `gsm::ModemError` — ошибка с кодами CME/CMS, контекстом и описанием.
 
-## Ограничения
+Для диагностики кодов модема доступны `gsm::cmeToStr(code)` и `gsm::cmsToStr(code)`.
 
-- Multipart SMS не реализован (исходящие UCS2 — максимум 70 code units)
-- Интерактивные USSD-сессии не поддерживаются
-- Нет GPRS / TCP / HTTP / MQTT (это GSM-транспорт для команд, а не data-модем)
-- Нет DTMF-декодирования
-- Аппаратные RESET/PWRKEY — полностью на стороне приложения
+---
 
-<a id="versions"></a>
+## Важные особенности работы
 
-## Версии
+- `modem.process()` необходимо вызывать постоянно.
+- В каждый момент времени выполняется не более одной AT-команды.
+- Внутренняя очередь Core рассчитана на 8 команд.
+- Команды имеют приоритеты; при одинаковом приоритете сохраняется FIFO-порядок.
+- Эксклюзивная транзакция не позволяет выполнять посторонние команды внутри защищённой последовательности.
+- Незапрошенные события модема (URC), например `RING`, `+CLIP`, `+CMTI`, `+CUSD`, `NO CARRIER`, направляются в соответствующие обработчики.
+- За один вызов `process()` парсер обрабатывает ограниченный объём входящих UART-данных.
+- Сетевые геттеры читают кэш и не отправляют AT-команды.
+- Возврат `Result::OK` означает принятие асинхронного запроса, а не обязательно окончательное выполнение.
+- Для исходящих SMS используется отдельная очередь на 5 сообщений; Multipart-сегменты одного SMS отправляются последовательно.
 
-- **v0.4.0** — текущая
-  - Core + SIM800L Driver + Network + Auth
-  - Асинхронная очередь, SMS, звонки, USSD, recovery, мониторинг сети
+---
 
-<a id="install"></a>
+## Текущие ограничения
+
+- Максимальный размер исходящего текста одного SMS-запроса — 280 байт UTF-8.
+- Одно длинное SMS может быть разделено максимум на 5 сегментов.
+- Размер текста приёма SMS ограничен буфером `SMSMessage::text` (240 байт UTF-8 плюс завершающий ноль).
+- Поддерживаются одноразовые USSD-запросы; интерактивные USSD-сессии не реализованы.
+- GPRS / TCP / HTTP / MQTT не входят в задачи этой библиотеки.
+- DTMF-декодирование не реализовано.
+- Аппаратное управление RESET/PWRKEY и питанием выполняет приложение.
+- Реальная доставка SMS зависит от сети оператора, SIM-карты и возможностей модема; успешный ответ модема подтверждает отправку в сеть, но не гарантирует прочтение получателем.
+
+---
 
 ## Установка
 
-1. Скопировать папку `GSM` в каталог библиотек Arduino:
+### Arduino IDE
+
+1. Скопируйте папку `GSM` в каталог библиотек Arduino:
    - Windows: `Документы/Arduino/libraries/GSM`
    - macOS: `~/Documents/Arduino/libraries/GSM`
    - Linux: `~/Arduino/libraries/GSM`
-2. Перезапустить Arduino IDE (или Reload Window в VS Code / Cursor)
-3. Открыть **File → Examples → GSM → BasicInit**
-
-Для VS Code / Cursor IntelliSense в комплекте есть готовый `.vscode/c_cpp_properties.json`.
+2. Перезапустите Arduino IDE.
+3. Откройте **File → Examples → GSM → BasicInit**.
 
 ### PlatformIO
+
+Добавьте в `platformio.ini`:
 
 ```ini
 lib_deps =
     https://github.com/TonTon-Macout/GSM.git
 ```
 
+### VS Code / Cursor и IntelliSense
+
+В комплект входит `.vscode/c_cpp_properties.json`. Для корректных подсказок откройте папку `GSM` как workspace либо добавьте `GSM/src` в `includePath`.
+
+Публичные методы снабжены комментариями Doxygen, поэтому IntelliSense может показывать описание методов и их параметров при наведении и автодополнении.
+
 ### Обновление
 
-Рекомендуется **удалять** старую папку библиотеки целиком и класть новую. Простая замена файлов может оставить удалённые в новой версии исходники и привести к ошибкам компиляции.
-
-<a id="feedback"></a>
-
-## Баги и обратная связь
-
-При нахождении багов создавайте **Issue**.
-
-При сообщении о проблеме обязательно указывайте:
-
-- Версию библиотеки
-- Какой используется МК (ESP32, Mega, …)
-- Версию SDK (для ESP)
-- Версию Arduino IDE / PlatformIO
-- Корректно ли работают встроенные примеры
-- Минимальный код, в котором проявляется проблема
-- Что ожидалось и что происходит на самом деле
+Перед установкой новой версии рекомендуется полностью удалить старую папку `GSM`, а затем скопировать новую. Простая замена файлов может оставить устаревшие исходники и привести к конфликтам компиляции.
 
 ---
 
-Библиотека открыта для доработок и Pull Request'ов.
+## Примеры
 
+В комплект входят:
 
+- `BasicInit` — запуск и инициализация модема.
+- `SMS_Calls` — работа с SMS и голосовыми вызовами.
+- `USSD` — отправка USSD-запроса и обработка ответа.
+- `AuthExample` — использование списка разрешённых номеров.
+
+---
+
+## Обратная связь
+
+При обнаружении ошибки создайте Issue и приложите:
+
+- версию библиотеки;
+- используемую плату и микроконтроллер;
+- версию Arduino Core / SDK;
+- версию Arduino IDE или PlatformIO;
+- пример кода, воспроизводящий проблему;
+- фрагмент UART-лога;
+- ожидаемое и фактическое поведение.
+
+Библиотека открыта для предложений, доработок и Pull Request.
