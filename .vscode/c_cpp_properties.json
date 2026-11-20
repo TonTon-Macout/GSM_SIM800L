@@ -1,0 +1,22 @@
+{
+    "configurations": [
+        {
+            "name": "Arduino",
+            "includePath": [
+                "${workspaceFolder}/src",
+                "${workspaceFolder}/src/core",
+                "${workspaceFolder}/src/driver",
+                "${workspaceFolder}/src/network",
+                "${workspaceFolder}/**"
+            ],
+            "defines": [
+                "ARDUINO=10800",
+                "USBCON"
+            ],
+            "cStandard": "c11",
+            "cppStandard": "c++11",
+            "intelliSenseMode": "gcc-x64"
+        }
+    ],
+    "version": 4
+}
