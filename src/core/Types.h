@@ -15,7 +15,8 @@ enum class Source : uint8_t {
     BUTTON,
     SMS,
     CALL,
-    EXTERNALE
+    EXTERNALE,
+    TELEGRAMM
 };
 
 /**
