@@ -430,13 +430,11 @@ Result SIM800L::sendSMS(const char* number, const char* text,
     }
     return beginSmsSend(number, text, request.source);
     // Start sending immediately.
-    Result result = beginSmsSend(number, text, request.source);
-
-    if (result != Result::OK && _cb.onError) {
-        _cb.onError(result, "SMS: failed to start sending");
-    }
-
-    return result;
+    //Result result = beginSmsSend(number, text, request.source);
+    //if (result != Result::OK && _cb.onError) {
+    //    _cb.onError(result, "SMS: failed to start sending");
+    //}
+    //return result;
 }
 
 
@@ -615,6 +613,13 @@ Result SIM800L::beginSmsSend(const char* number, const char* text, Source source
     if (!prepareSmsText(text)) {
         if (_cb.onError) _cb.onError(Result::INVALID_PARAM, "SMS: failed to prepare text");
         return Result::INVALID_PARAM;
+    }
+
+    // Notify about multipart SMS.
+    if (_smsSegmentCount > 1 && _cb.onError) {
+        char message[64];
+        snprintf(message, sizeof(message), "SMS: multipart message (%u SMS)", (unsigned)_smsSegmentCount);
+        _cb.onError(Result::OK, message);
     }
 
     strncpy(_smsSendText, text, sizeof(_smsSendText) - 1);
