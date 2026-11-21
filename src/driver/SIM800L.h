@@ -692,7 +692,7 @@ private:
     void parseCmgrHeader(const char* line);
     void parseSmsMemory(const char* line);
     void finishSmsRead(Result result);
-    Result enqueueSmsCommand(const char* cmd, uint16_t requestId, uint16_t timeout = 10000,
+    Result enqueueSmsCommand(const char* cmd, int64_t requestId, uint16_t timeout = 10000,
                              uint16_t transactionId = 0);
     void storeLastResponse(const char* line);
     void finishSmsSend(Result result);

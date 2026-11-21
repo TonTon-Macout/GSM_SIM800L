@@ -26,11 +26,11 @@ enum class Source : uint8_t {
  * @param transactionId Идентификатор эксклюзивной последовательности; 0 означает обычную команду.
  */
 struct RequestInfo {
-    uint16_t requestId;
+    int64_t requestId;
     Source   source;
     uint16_t transactionId; // 0 = ordinary command, non-zero = exclusive sequence
 
-    RequestInfo(uint16_t id = 0, Source src = Source::INTERNAL, uint16_t transaction = 0)
+    RequestInfo(int64_t id = 0, Source src = Source::INTERNAL, uint16_t transaction = 0)
         : requestId(id), source(src), transactionId(transaction) {}
 };
 

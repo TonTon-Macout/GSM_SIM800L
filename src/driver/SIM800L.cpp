@@ -954,7 +954,7 @@ void SIM800L::onCoreResponseLine(const char* line, const RequestInfo& request) {
     captureErrorLine(line);
     storeLastResponse(line);
 
-    const uint16_t id = request.requestId;
+    const int64_t id = request.requestId;
 
     if (id == static_cast<uint16_t>(DriverRequest::SMS_READ)) {
         if (strncmp(line, "+CMGR:", 6) == 0) parseCmgrHeader(line);
@@ -1016,7 +1016,7 @@ void SIM800L::reportError(Result result, const char* context) {
 }
 
 void SIM800L::onCoreCommandComplete(const CommandResult& result) {
-    const uint16_t id = result.request.requestId;
+    const int64_t id = result.request.requestId;
     if (result.result == Result::OK) _lastSuccessfulCommandAt = millis();
 
     if (id == static_cast<uint16_t>(DriverRequest::USSD_SEND)) {
@@ -1562,8 +1562,7 @@ void SIM800L::parseCmti(const char* line) {
     queueSms(storage, (uint8_t)index);
 }
 
-
-Result SIM800L::enqueueSmsCommand(const char* cmd, uint16_t requestId, uint16_t timeout,
+Result SIM800L::enqueueSmsCommand(const char* cmd, int64_t requestId, uint16_t timeout,
                                   uint16_t transactionId) {
     return enqueue(cmd, RequestInfo(requestId, Source::SMS, transactionId), timeout, CommandPriority::P_HIGH);
 }
